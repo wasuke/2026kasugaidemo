@@ -2,10 +2,9 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
   <title>360° Slideshow Demo</title>
 
-  <!-- Pannellum: 360°画像ビューア -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.css">
   <script src="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.js"></script>
 
@@ -16,6 +15,7 @@
       height: 100%;
       overflow: hidden;
       background: #000;
+      touch-action: none;
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
         "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif;
     }
@@ -32,6 +32,61 @@
     #viewerA { opacity: 1; z-index: 1; }
     #viewerB { opacity: 0; z-index: 2; pointer-events: none; }
 
+    #startScreen {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      color: #fff;
+      background:
+        radial-gradient(circle at 50% 40%, rgba(60,80,120,.62), rgba(0,0,0,.96) 62%),
+        #000;
+      text-align: center;
+    }
+
+    #startPanel {
+      width: min(92vw, 520px);
+      padding: 26px 20px;
+      border-radius: 24px;
+      background: rgba(0,0,0,.38);
+      box-shadow: 0 12px 40px rgba(0,0,0,.36);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+
+    #startPanel h1 {
+      margin: 0 0 12px;
+      font-size: clamp(22px, 5.8vw, 34px);
+      line-height: 1.25;
+      font-weight: 700;
+    }
+
+    #startPanel p {
+      margin: 0 0 18px;
+      color: rgba(255,255,255,.86);
+      font-size: 15px;
+      line-height: 1.7;
+    }
+
+    #startButton {
+      border: 0;
+      border-radius: 999px;
+      padding: 16px 24px;
+      font-size: 17px;
+      font-weight: 700;
+      line-height: 1;
+      color: #111;
+      background: #fff;
+      cursor: pointer;
+      box-shadow: 0 6px 24px rgba(0,0,0,.28);
+    }
+
+    #startButton:active {
+      transform: translateY(1px);
+    }
+
     .ui {
       position: fixed;
       left: 12px;
@@ -43,9 +98,15 @@
       align-items: center;
       justify-content: space-between;
       pointer-events: none;
+      opacity: 0;
+      transition: opacity .4s ease;
     }
 
-    .badge, button {
+    .ui.show {
+      opacity: 1;
+    }
+
+    .badge, .smallButton {
       border: 0;
       border-radius: 999px;
       background: rgba(0,0,0,.52);
@@ -58,12 +119,9 @@
       box-shadow: 0 2px 12px rgba(0,0,0,.22);
     }
 
-    button {
+    .smallButton {
       pointer-events: auto;
       cursor: pointer;
-    }
-
-    #gyroButton {
       display: none;
     }
 
@@ -81,12 +139,13 @@
     .notice {
       max-width: min(92vw, 640px);
       color: #fff;
-      background: rgba(0,0,0,.48);
+      background: rgba(0,0,0,.52);
       border-radius: 14px;
       padding: 10px 14px;
       font-size: 13px;
       text-align: center;
       display: none;
+      line-height: 1.5;
     }
 
     .pnlm-load-box,
@@ -100,13 +159,24 @@
   <div id="viewerA"></div>
   <div id="viewerB"></div>
 
+  <div id="startScreen">
+    <div id="startPanel">
+      <h1>360° Demo</h1>
+      <p>
+        「demoを開始する」を押すと、全画面表示に切り替えます。<br>
+        Androidではジャイロ開始を試みます。iPhoneでは同じ操作で許可画面が出ます。
+      </p>
+      <button id="startButton" type="button">demoを開始する</button>
+    </div>
+  </div>
+
   <div class="top">
     <div id="notice" class="notice"></div>
   </div>
 
-  <div class="ui">
+  <div id="ui" class="ui">
     <div id="counter" class="badge">1 / 12</div>
-    <button id="gyroButton" type="button">ジャイロを有効にする</button>
+    <button id="gyroButton" class="smallButton" type="button">ジャイロを有効にする</button>
   </div>
 
 <script>
@@ -114,8 +184,8 @@
   "use strict";
 
   /*
-    ここに画像ファイル名を並べます。
-    photosフォルダに 001.jpg 〜 012.jpg を入れてください。
+    photosフォルダに 001.jpg 〜 012.jpg を置いてください。
+    20秒ごとに自動切替します。
   */
   const imageList = [
     "photos/001.jpg",
@@ -140,6 +210,9 @@
   const counterEl = document.getElementById("counter");
   const gyroButton = document.getElementById("gyroButton");
   const noticeEl = document.getElementById("notice");
+  const startScreen = document.getElementById("startScreen");
+  const startButton = document.getElementById("startButton");
+  const ui = document.getElementById("ui");
 
   let currentIndex = 0;
   let front = "A";
@@ -147,6 +220,14 @@
   let viewerB = null;
   let timerId = null;
   let orientationEnabled = false;
+  let started = false;
+
+  const preloadState = {
+    total: imageList.length,
+    loaded: 0,
+    failed: 0,
+    done: false
+  };
 
   function showNotice(text, timeout = 3500) {
     noticeEl.textContent = text;
@@ -155,6 +236,14 @@
     showNotice._timer = window.setTimeout(() => {
       noticeEl.style.display = "none";
     }, timeout);
+  }
+
+  function isMobileLike() {
+    return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+  }
+
+  function isIOS() {
+    return /iPhone|iPad|iPod/i.test(navigator.userAgent);
   }
 
   function viewerConfig(imagePath) {
@@ -173,6 +262,31 @@
       friction: 0.18,
       orientationOnByDefault: orientationEnabled
     };
+  }
+
+  function preloadImages() {
+    imageList.forEach((src) => {
+      const img = new Image();
+      img.decoding = "async";
+      img.onload = () => {
+        preloadState.loaded++;
+        checkPreloadFinished();
+      };
+      img.onerror = () => {
+        preloadState.failed++;
+        checkPreloadFinished();
+      };
+      img.src = src;
+    });
+  }
+
+  function checkPreloadFinished() {
+    if (preloadState.loaded + preloadState.failed >= preloadState.total) {
+      preloadState.done = true;
+      if (started && preloadState.failed > 0) {
+        showNotice(`${preloadState.failed}枚の画像を先読みできませんでした。ファイル名を確認してください。`, 6000);
+      }
+    }
   }
 
   function destroyViewer(viewer) {
@@ -209,6 +323,8 @@
   }
 
   function switchToNext() {
+    if (!started) return;
+
     const nextIndex = (currentIndex + 1) % imageList.length;
     const targetName = hiddenViewerName();
     const targetId = targetName === "A" ? "viewerA" : "viewerB";
@@ -217,10 +333,12 @@
       destroyViewer(viewerA);
       viewerA = createViewer(targetId, imageList[nextIndex]);
       viewerA.on("load", () => applyCurrentView(viewerA));
+      viewerA.on("error", () => showNotice("画像を読み込めませんでした。photosフォルダとファイル名を確認してください。", 6000));
     } else {
       destroyViewer(viewerB);
       viewerB = createViewer(targetId, imageList[nextIndex]);
       viewerB.on("load", () => applyCurrentView(viewerB));
+      viewerB.on("error", () => showNotice("画像を読み込めませんでした。photosフォルダとファイル名を確認してください。", 6000));
     }
 
     window.setTimeout(() => {
@@ -260,6 +378,20 @@
     timerId = window.setInterval(switchToNext, SLIDE_SECONDS * 1000);
   }
 
+  async function requestFullscreen() {
+    const el = document.documentElement;
+
+    try {
+      if (el.requestFullscreen) {
+        await el.requestFullscreen();
+      } else if (el.webkitRequestFullscreen) {
+        await el.webkitRequestFullscreen();
+      }
+    } catch (e) {
+      showNotice("全画面表示に切り替えられませんでした。ブラウザの制限です。", 4500);
+    }
+  }
+
   async function enableGyro() {
     try {
       if (
@@ -268,58 +400,75 @@
       ) {
         const result = await DeviceOrientationEvent.requestPermission();
         if (result !== "granted") {
-          showNotice("ジャイロの利用が許可されませんでした。指でドラッグして見渡せます。");
-          return;
+          gyroButton.style.display = "inline-block";
+          showNotice("ジャイロの利用が許可されませんでした。指でドラッグして見渡せます。", 5000);
+          return false;
         }
       }
 
       orientationEnabled = true;
+
       const v = activeViewer();
       if (v && typeof v.startOrientation === "function") {
         v.startOrientation();
       }
+
       gyroButton.style.display = "none";
-      showNotice("ジャイロを有効にしました。スマホを動かして見渡せます。");
+      showNotice("ジャイロを有効にしました。スマホを動かして見渡せます。", 3000);
+      return true;
     } catch (e) {
-      showNotice("この端末ではジャイロを有効化できませんでした。指でドラッグして見渡せます。");
+      gyroButton.style.display = "inline-block";
+      showNotice("この端末ではジャイロを有効化できませんでした。指でドラッグして見渡せます。", 5000);
+      return false;
     }
   }
 
-  function setupGyroButton() {
-    const isMobileLike = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+  function createInitialViewer() {
+    destroyViewer(viewerA);
+    viewerA = createViewer("viewerA", imageList[currentIndex]);
+    viewerA.on("error", () => {
+      showNotice("画像を読み込めませんでした。photosフォルダとファイル名を確認してください。", 6000);
+    });
+  }
 
-    if (!isMobileLike) return;
+  async function startDemo() {
+    if (started) return;
+    started = true;
 
-    gyroButton.style.display = "inline-block";
-    gyroButton.addEventListener("click", enableGyro, { once: false });
+    await requestFullscreen();
+
+    startScreen.style.display = "none";
+    ui.classList.add("show");
 
     /*
-      Androidの一部環境ではユーザー操作なしでもorientationが動く場合があります。
-      iPhoneはボタン操作による許可が必要です。
+      最初のタップ操作内でジャイロ許可を試す。
+      iPhoneではここで許可ダイアログが出る。
+      Androidでは可能な範囲で自動開始する。
     */
-    if (
-      typeof DeviceOrientationEvent !== "undefined" &&
-      typeof DeviceOrientationEvent.requestPermission !== "function"
-    ) {
-      orientationEnabled = true;
-      window.setTimeout(() => {
-        const v = activeViewer();
-        if (v && typeof v.startOrientation === "function") {
-          try { v.startOrientation(); } catch (e) {}
-        }
-      }, 800);
+    if (isMobileLike()) {
+      await enableGyro();
+
+      if (!orientationEnabled && isIOS()) {
+        gyroButton.style.display = "inline-block";
+      }
+    }
+
+    startTimer();
+
+    if (!preloadState.done) {
+      showNotice("画像を先読み中です。表示はこのまま開始します。", 3000);
+    } else if (preloadState.failed > 0) {
+      showNotice(`${preloadState.failed}枚の画像を先読みできませんでした。ファイル名を確認してください。`, 6000);
     }
   }
 
   function init() {
-    viewerA = createViewer("viewerA", imageList[currentIndex]);
+    preloadImages();
+    createInitialViewer();
     updateCounter();
-    setupGyroButton();
-    startTimer();
 
-    viewerA.on("error", () => {
-      showNotice("画像を読み込めませんでした。photosフォルダとファイル名を確認してください。", 6000);
-    });
+    startButton.addEventListener("click", startDemo);
+    gyroButton.addEventListener("click", enableGyro);
   }
 
   window.addEventListener("load", init);
